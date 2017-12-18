@@ -94,6 +94,7 @@ type Config struct {
 	Verbose                string            `json:"verbose"`
 	Env                    map[string]string `json:"env"`
 	Pip                    []string          `json:"pip"`
+	HealthCheck            string            `json:"healthcheck"`
 	Runner                 RunnerCustom      `json:"runner"`
 }
 

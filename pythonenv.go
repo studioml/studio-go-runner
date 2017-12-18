@@ -130,7 +130,11 @@ pip install {{range .CfgPips}} {{.}}{{end}}
 {{end}}
 export STUDIOML_EXPERIMENT={{.E.ExprSubDir}}
 export STUDIOML_HOME={{.E.RootDir}}
+set -e
 cd {{.E.ExprDir}}/workspace
+touch ../_runner/check_001
+{{if .E.Request.Config.HealthCheck}}{{.E.Request.Config.HealthCheck}}{{end}}
+touch ../_runner/check_002
 pip freeze
 python {{.E.Request.Experiment.Filename}} {{range .E.Request.Experiment.Args}}{{.}} {{end}}
 cd -
