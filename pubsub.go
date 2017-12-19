@@ -76,30 +76,54 @@ func (ps *PubSub) Exists(ctx context.Context, subscription string) (exists bool,
 	return exists, nil
 }
 
-func (ps *PubSub) Work(ctx context.Context, qTimeout time.Duration, subscription string, handler MsgHandler) (msgs uint64, resource *Resource, err errors.Error) {
+// Work will try to start as many instances of a single item of work that it can and then
+// stop and wait for them all to drain
+//
+func (ps *PubSub) Work(ctx context.Context, qTimeout time.Duration, subscription string, maxJobs uint, handler MsgHandler) (msgs uint64, resource *Resource, err errors.Error) {
 
 	client, errGo := pubsub.NewClient(ctx, ps.project, option.WithCredentialsFile(ps.creds))
 	if errGo != nil {
 		return 0, nil, errors.Wrap(errGo).With("stack", stack.Trace().TrimRuntime()).With("project", ps.project)
 	}
-	defer client.Close()
+	// defer of the close is not being used to allow the close done later
+	// to happen at a predictable time
 
 	sub := client.Subscription(subscription)
 	sub.ReceiveSettings.MaxExtension = time.Duration(12 * time.Hour)
+	sub.ReceiveSettings.MaxOutstandingMessages = int(maxJobs)
 
-	errGo = sub.Receive(ctx,
-		func(ctx context.Context, msg *pubsub.Message) {
+	qCtx, qCancel := context.WithTimeout(context.Background(), qTimeout)
+
+	// Watch both contexts for cancellations and signal the pubsub receiver
+	go func() {
+		defer recover()
+		select {
+		case <-ctx.Done():
+			qCancel()
+		case <-qCtx.Done():
+			return
+		}
+	}()
+
+	// Could block forever so we use a cancel context.  The qCtx will expire either with no messages
+	// or several seconds into the procesing of the first message.  The function handling the
+	// message however will use the application specific context not the queue receive context
+	errGo = sub.Receive(qCtx,
+		func(_ context.Context, msg *pubsub.Message) {
 
 			if rsc, ack := handler(ctx, ps.project, subscription, ps.creds, msg.Data); ack {
 				msg.Ack()
 				resource = rsc
 			} else {
 				msg.Nack()
+				qCancel()
 			}
 			atomic.AddUint64(&msgs, 1)
 		})
 
-	if errGo != nil {
+	client.Close()
+
+	if errGo != nil && errGo != context.Canceled {
 		return msgs, nil, errors.Wrap(errGo).With("stack", stack.Trace().TrimRuntime())
 	}
 

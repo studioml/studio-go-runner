@@ -122,7 +122,8 @@ source bin/activate
 pip install -I {{.StudioPIP}}
 {{end}}
 {{if .Pips}}
-pip install -I {{range .Pips}} {{.}}{{end}}
+{{range .Pips}} 
+pip install -I {{.}}{{end}}
 {{end}}
 pip install pyopenssl --upgrade
 {{if .CfgPips}}

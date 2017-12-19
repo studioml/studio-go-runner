@@ -13,6 +13,7 @@ import (
 	"math/rand"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,11 +42,6 @@ var (
 	// purges expired items every 10 seconds
 	//
 	backoffs = cache.New(10*time.Second, time.Minute)
-
-	// busyQs is used to indicate when a worker is active for a named project:subscription so
-	// that only one worker is activate at a time
-	//
-	busyQs = SubsBusy{subs: map[string]bool{}}
 )
 
 type SubsBusy struct {
@@ -83,7 +79,7 @@ func NewQueuer(projectID string, creds string) (qr *Queuer, err errors.Error) {
 		project: projectID,
 		cred:    creds,
 		subs:    Subscriptions{subs: map[string]*Subscription{}},
-		timeout: 15 * time.Second,
+		timeout: 2 * time.Second,
 	}
 	qr.tasker, err = runner.NewTaskQueue(projectID, creds)
 	if err != nil {
@@ -192,10 +188,10 @@ func shuffle(slc []Subscription) (shuffled []Subscription) {
 //
 func (qr *Queuer) producer(rqst chan *SubRequest, quitC chan bool) {
 
-	logger.Debug("started the queue checking producer")
-	defer logger.Debug("stopped the queue checking producer")
+	logger.Debug("started queue checking producer")
+	defer logger.Debug("completed queue checking producer")
 
-	check := time.NewTicker(time.Duration(5 * time.Second))
+	check := time.NewTicker(time.Duration(15 * time.Second))
 	defer check.Stop()
 
 	nextQDbg := time.Now()
@@ -233,13 +229,11 @@ func (qr *Queuer) producer(rqst chan *SubRequest, quitC chan bool) {
 				}
 			}
 
-			// track the first queue that has not been checked for the longest period of time that
-			// also has no traffic on this node.  This queue will be check but it wont be until the next
-			// pass that a new empty or idle queue will be checked.
-			idle := []Subscription{}
+			// Find queues that are not backed off
+			ready := []Subscription{}
 
 			for _, sub := range ranked {
-				// IDLE queue processing, that is queues that have no work running
+				// Ready queue processing, that is queues that have no work running
 				// against this runner
 				if sub.cnt == 0 {
 					if _, isPresent := backoffs.Get(qr.project + ":" + sub.name); isPresent {
@@ -247,20 +241,25 @@ func (qr *Queuer) producer(rqst chan *SubRequest, quitC chan bool) {
 					}
 					// Save the queue that has been waiting the longest into the
 					// idle slot that we will be processing on this pass
-					idle = append(idle, sub)
+					ready = append(ready, sub)
 				}
 			}
 
-			if len(idle) != 0 {
+			// Shuffle the queues that will be sent in random order to the consumer
+			shuffle(ready)
 
-				// Shuffle the queues to pick one at random
-				shuffle(idle)
+			// Trim the length of the slice of queues to check so that we dont go
+			// too crazy against the cloud provider
+			if len(ready) > 8 {
+				ready = ready[:8]
+			}
 
-				if err := qr.check(idle[0].name, rqst, quitC); err != nil {
+			for _, readyQ := range ready {
+				if err := qr.check(readyQ.name, rqst, quitC); err != nil {
 
-					backoffs.Set(qr.project+":"+idle[0].name, true, time.Duration(time.Minute))
+					backoffs.Set(qr.project+":"+readyQ.name, true, time.Duration(time.Minute))
 
-					logger.Warn(fmt.Sprintf("checking %s for work failed due to %s, backoff 1 minute", qr.project+":"+idle[0].name, err.Error()))
+					logger.Warn(fmt.Sprintf("checking %s for work failed due to %s, backoff 1 minute", qr.project+":"+readyQ.name, err.Error()))
 					break
 				}
 				lastReady = time.Now()
@@ -348,7 +347,7 @@ func getMachineResources() (rsc *runner.Resource) {
 func (qr *Queuer) check(name string, rQ chan *SubRequest, quitC chan bool) (err errors.Error) {
 
 	// fqName is the fully qualified name for the subscription
-	fqName := qr.project + ":" + name
+	key := qr.project + ":" + name
 
 	// Check to see if anyone is listening for a queue to check by sending a dummy request, and then
 	// send the real request if the check message is consumed
@@ -360,7 +359,7 @@ func (qr *Queuer) check(name string, rQ chan *SubRequest, quitC chan bool) (err 
 
 	sub, isPresent := qr.subs.subs[name]
 	if !isPresent {
-		return errors.New(fmt.Sprintf("subscription %s could not be found", fqName)).With("stack", stack.Trace().TrimRuntime())
+		return errors.New(key+" subscription could not be found").With("stack", stack.Trace().TrimRuntime())
 	}
 
 	if sub.rsc != nil {
@@ -369,15 +368,15 @@ func (qr *Queuer) check(name string, rQ chan *SubRequest, quitC chan bool) (err 
 				return err
 			}
 
-			return errors.New(fmt.Sprintf("%s could not be accomodated %#v -> %#v", fqName, sub.rsc, getMachineResources())).With("stack", stack.Trace().TrimRuntime())
+			return errors.New(fmt.Sprintf("%s could not be accomodated %#v -> %#v", key, sub.rsc, getMachineResources())).With("stack", stack.Trace().TrimRuntime())
 		} else {
 			if logger.IsTrace() {
-				logger.Trace(fmt.Sprintf("%s passed capacity check", fqName))
+				logger.Trace(key + " passed capacity check")
 			}
 		}
 	} else {
 		if logger.IsTrace() {
-			logger.Trace(fmt.Sprintf("%s skipped capacity check", fqName))
+			logger.Trace(key + " skipped capacity check")
 		}
 	}
 
@@ -444,8 +443,8 @@ func (qr *Queuer) run(quitC chan bool) (err errors.Error) {
 
 func (qr *Queuer) consumer(readyC chan *SubRequest, quitC chan bool) {
 
-	logger.Debug(fmt.Sprintf("started %s checking consumer", qr.project))
-	defer logger.Debug(fmt.Sprintf("stopped %s checking consumer", qr.project))
+	logger.Debug("started checking consumer " + qr.project)
+	defer logger.Debug("completed checking consumer " + qr.project)
 
 	for {
 		select {
@@ -459,7 +458,7 @@ func (qr *Queuer) consumer(readyC chan *SubRequest, quitC chan bool) {
 			if len(request.subscription) == 0 {
 				continue
 			}
-			go qr.filterWork(request, quitC)
+			qr.filterWork(request, quitC)
 		case <-quitC:
 			return
 		}
@@ -472,143 +471,36 @@ func (qr *Queuer) consumer(readyC chan *SubRequest, quitC chan bool) {
 //
 func (qr *Queuer) filterWork(request *SubRequest, quitC chan bool) {
 
-	if _, isPresent := backoffs.Get(request.project + ":" + request.subscription); isPresent {
-		logger.Trace(fmt.Sprintf("backoff on for %v", request))
+	key := request.project + ":" + request.subscription
+
+	// Before spinning off a goroutine check to see if another
+	// goroutine is processing this project and queue
+	if _, isPresent := backoffs.Get(key); isPresent {
+		logger.Trace("backoff on for " + key)
 		return
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Warn(fmt.Sprintf("panic in filterWork %#v, %s", r, string(debug.Stack())))
-		}
-	}()
+	// When work is started to look at a queue then we want to suppress
+	// new activities for some seconds to allow other queues to be serviced
+	backoffs.Set(key, true, time.Duration(10*time.Second))
 
-	busyQs.Lock()
-	_, busy := busyQs.subs[request.project+":"+request.subscription]
-	if !busy {
-		busyQs.subs[request.project+":"+request.subscription] = true
-		logger.Trace(fmt.Sprintf("mark as busy %v", request))
-	}
-	busyQs.Unlock()
-
-	if busy {
-		logger.Trace(fmt.Sprintf("busy %v", request))
-		return
-	}
-
-	defer func() {
-		busyQs.Lock()
-		defer busyQs.Unlock()
-
-		delete(busyQs.subs, request.project+":"+request.subscription)
-		logger.Trace(fmt.Sprintf("allow queue %v", request))
-	}()
-
-	qr.doWork(request, quitC)
-}
-
-func handleMsg(ctx context.Context, project string, subscription string, credentials string, msg []byte) (rsc *runner.Resource, consume bool) {
-
-	rsc = nil
-
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Warn(fmt.Sprintf("%#v", r))
-		}
-	}()
-
-	// Check for the back off and self destruct if one is seen for this subscription, leave the message for
-	// redelivery upto the framework
-	//
-	// TODO Ack for PubSub Nack for SQS due to SQS supporting dead letter queues
-	//
-	if _, isPresent := backoffs.Get(project + ":" + subscription); isPresent {
-		logger.Debug(fmt.Sprintf("stopping checking %s:%s backing off", project, subscription))
-		return rsc, false
-	}
-
-	logger.Trace(fmt.Sprintf("msg processing started on %s:%s", project, subscription))
-	defer logger.Trace(fmt.Sprintf("msg processing completed on %s:%s", project, subscription))
-
-	// allocate the processor and sub the subscription as
-	// the group mechanisim for work comming down the
-	// pipe that is sent to the resource allocation
-	// module
-	proc, err := newProcessor(subscription, msg, credentials, ctx.Done())
-	if err != nil {
-		logger.Warn(fmt.Sprintf("unable to process msg from %s:%s due to %s", project, subscription, err.Error()))
-
-		backoffs.Set(project+":"+subscription, true, time.Duration(10*time.Second))
-		return rsc, true
-	}
-	defer proc.Close()
-
-	rsc = proc.Request.Experiment.Resource.Clone()
-
-	header := fmt.Sprintf("%s:%s project %s experiment %s", project, subscription, proc.Request.Config.Database.ProjectId, proc.Request.Experiment.Key)
-	logger.Info("started " + header)
-	runner.InfoSlack(proc.Request.Config.Runner.SlackDest, "started "+header, []string{})
-
-	// Used to cancel subsequent interactions if the context used by the queue system is cancelled.
-	// Timeouts within the processor are not controlled by the queuing system
-	prcCtx, prcCancel := context.WithCancel(context.Background())
-	// Always cancel the operation, however we should ignore errors as these could
-	// be already cancelled so we need to ignore errors at this point
-	defer func() {
-		defer func() {
-			recover()
-		}()
-		prcCancel()
-	}()
-	// If the outer context gets cancelled cancel our inner context
 	go func() {
-		select {
-		case <-ctx.Done():
-			msg := fmt.Sprintf("%s:%s caller cancelled %s", project, subscription, proc.Request.Experiment.Key)
-			logger.Info(msg)
-			prcCancel()
-		}
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Warn(fmt.Sprintf("panic in filterWork %#v, %s", r, string(debug.Stack())))
+			}
+		}()
+
+		qr.doWork(request, quitC)
+
 	}()
-
-	// Blocking call to run the entire task and only return on termination due to error or success
-	backoff, ack, err := proc.Process(prcCtx)
-	if err != nil {
-
-		if !ack {
-			txt := fmt.Sprintf("%s retry backing off for %s due to %s", header, backoff, err.Error())
-			runner.InfoSlack(proc.Request.Config.Runner.SlackDest, txt, []string{})
-			logger.Info(txt)
-		} else {
-			txt := fmt.Sprintf("%s dumped, backing off for %s due to %s", header, backoff, err.Error())
-
-			runner.WarningSlack(proc.Request.Config.Runner.SlackDest, txt, []string{})
-			logger.Warn(txt)
-		}
-		logger.Warn(err.Error())
-
-		backoffs.Set(project+":"+subscription, true, backoff)
-
-		return rsc, ack
-	}
-
-	runner.InfoSlack(proc.Request.Config.Runner.SlackDest, header+" stopped", []string{})
-
-	// At this point we could look for a backoff for this queue and set it to a small value as we are about to release resources
-	if _, isPresent := backoffs.Get(project + ":" + subscription); isPresent {
-		backoffs.Set(project+":"+subscription, true, time.Second)
-	}
-	return rsc, ack
 }
 
 func (qr *Queuer) doWork(request *SubRequest, quitC chan bool) {
 
-	if _, isPresent := backoffs.Get(request.project + ":" + request.subscription); isPresent {
-		logger.Trace(fmt.Sprintf("%v, backed off", request))
-		return
-	}
+	key := request.project + ":" + request.subscription
 
-	logger.Trace(fmt.Sprintf("started checking %#v", *request))
-	defer logger.Trace(fmt.Sprintf("stopped checking for %#v", *request))
+	logger.Trace("started checking " + key)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -616,32 +508,44 @@ func (qr *Queuer) doWork(request *SubRequest, quitC chan bool) {
 		}
 	}()
 
-	// cCTX could be used with a timeout later to have a global limit on runtimes
+	// cCtx could be used with a timeout later to have a global limit on runtimes
 	cCtx, cCancel := context.WithCancel(context.Background())
+
 	// The cancel is called explicitly below due to GC and defers being delayed
 
 	go func() {
-		logger.Trace(fmt.Sprintf("started queue check %#v", *request))
-		defer logger.Trace(fmt.Sprintf("completed queue check for %#v", *request))
+		logger.Trace("started doWork check "+key+" queue timeout is ", qr.timeout.String())
+		defer logger.Trace("completed doWork check " + key)
 
-		// Spins out a go routine to handle messages
-		cnt, rsc, err := qr.tasker.Work(cCtx, qr.timeout, request.subscription, handleMsg)
+		// Spins out a go routine to handle messages, Work is blocking and will return
+		// either after qr.timeout for a work message is received and processed.  Using a 0
+		// for maxJobs allows as many jobs to be started as can fill a machine
+		cnt, rsc, err := qr.tasker.Work(cCtx, qr.timeout, request.subscription, 0, handleMsg)
+
+		// Cancel the context the message would have been handled using so that the queue
+		// checker below wont be activated
+		func() {
+			defer func() {
+				recover()
+			}()
+			cCancel()
+		}()
+
 		if err != nil {
-			logger.Warn(fmt.Sprintf("%v msg receive failed due to %s", request, strings.Replace(fmt.Sprint(err), "\n", "", 0)))
+			logger.Warn(key + " msg receive failed due to " + strings.Replace(fmt.Sprint(err), "\n", "", 0))
 			return
+		} else {
+			logger.Info(key + " processed " + strconv.FormatUint(cnt, 10) + " msgs")
 		}
 
 		// Set the default resource requirements for the next message fetch to that of the most recently
 		// seen resource request
 		//
-		if rsc == nil {
-			if cnt > 0 {
-				logger.Warn(fmt.Sprintf("%v handled msg that lacked a resource spec", request))
+
+		if rsc != nil {
+			if err = qr.subs.setResources(request.subscription, rsc); err != nil {
+				logger.Info(key + " resources not updated due to " + err.Error())
 			}
-			return
-		}
-		if err = qr.subs.setResources(request.subscription, rsc); err != nil {
-			logger.Info(fmt.Sprintf("%s:%s resources not updated due to %s", request.project, request.subscription, err))
 		}
 
 	}()
@@ -663,11 +567,11 @@ func (qr *Queuer) doWork(request *SubRequest, quitC chan bool) {
 				eCancel()
 
 				if err != nil {
-					logger.Info(fmt.Sprintf("%s:%s could not be validated due to %s", request.project, request.subscription, err))
+					logger.Info(key + " could not be validated due to " + err.Error())
 					continue
 				}
 				if !exists {
-					logger.Warn(fmt.Sprintf("%s:%s no longer found cancelling running tasks", request.project, request.subscription))
+					logger.Warn(key + " no longer found cancelling running tasks")
 					// If not cancel the context being used to manage the lifecycle of
 					// task processing
 					func() {
@@ -679,6 +583,11 @@ func (qr *Queuer) doWork(request *SubRequest, quitC chan bool) {
 					return
 				}
 
+				// Keep on setting the backoff until the job is done.  The backoff
+				// is set to 5 minutes so that if the jobs do complete there is
+				// a cooldown period to allow other jobs in
+				backoffs.Set(key, true, time.Duration(5*time.Minute))
+
 			case <-cCtx.Done():
 				return
 			case <-quitC:
@@ -687,8 +596,86 @@ func (qr *Queuer) doWork(request *SubRequest, quitC chan bool) {
 		}
 	}()
 
+	logger.Trace("completed checking " + key)
+}
+
+func handleMsg(ctx context.Context, project string, subscription string, credentials string, msg []byte) (rsc *runner.Resource, consume bool) {
+
+	rsc = nil
+
 	defer func() {
-		recover()
+		if r := recover(); r != nil {
+			logger.Warn(fmt.Sprintf("%#v", r))
+		}
 	}()
-	cCancel()
+
+	key := project + ":" + subscription
+
+	logger.Trace("msg processing started on " + key)
+	defer logger.Trace("msg processing completed on " + key)
+
+	// allocate the processor and sub the subscription as
+	// the group mechanisim for work comming down the
+	// pipe that is sent to the resource allocation
+	// module
+	proc, err := newProcessor(subscription, msg, credentials, ctx.Done())
+	if err != nil {
+		logger.Warn("unable to process msg from "+key+" due to %s", err)
+
+		return rsc, true
+	}
+	defer proc.Close()
+
+	rsc = proc.Request.Experiment.Resource.Clone()
+
+	header := fmt.Sprintf(key + " project " + proc.Request.Config.Database.ProjectId + " experiment " + proc.Request.Experiment.Key)
+	logger.Info("started handling " + header)
+
+	// Used to cancel subsequent interactions if the context used by the queue system is cancelled.
+	// Timeouts within the processor are not controlled by the queuing system
+	prcCtx, prcCancel := context.WithCancel(context.Background())
+	// Always cancel the operation, however we should ignore errors as these could
+	// be already cancelled so we need to ignore errors at this point
+	defer func() {
+		defer func() {
+			recover()
+		}()
+		prcCancel()
+	}()
+	// If the outer context gets cancelled cancel our inner context
+	go func() {
+		select {
+		case <-ctx.Done():
+			msg := key + " caller cancelled " + proc.Request.Experiment.Key
+			logger.Info(msg)
+			prcCancel()
+		}
+	}()
+
+	// Blocking call to run the entire task and only return on termination due to error or success
+	ack, broadcast, err := proc.Process(prcCtx)
+	if err != nil {
+
+		if !ack {
+			txt := fmt.Sprintf("%s retry due to %s", header, err.Error())
+			if broadcast {
+				runner.InfoSlack(proc.Request.Config.Runner.SlackDest, txt, []string{})
+			}
+			logger.Info(txt)
+		} else {
+			txt := fmt.Sprintf("%s dumped, due to %s", header, err.Error())
+
+			if broadcast {
+				runner.WarningSlack(proc.Request.Config.Runner.SlackDest, txt, []string{})
+			}
+			logger.Warn(txt)
+		}
+		logger.Warn(err.Error())
+
+		return rsc, ack
+	}
+
+	runner.InfoSlack(proc.Request.Config.Runner.SlackDest, header+" stopped", []string{})
+
+	return rsc, ack
 }

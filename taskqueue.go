@@ -19,7 +19,7 @@ type TaskQueue interface {
 	Refresh(timeout time.Duration) (known map[string]interface{}, err errors.Error)
 
 	// Process a unit of work after it arrives on a queue
-	Work(ctx context.Context, qTimeout time.Duration, subscription string, handler MsgHandler) (msgs uint64, resource *Resource, err errors.Error)
+	Work(ctx context.Context, qTimeout time.Duration, subscription string, maxJobs uint, handler MsgHandler) (msgs uint64, resource *Resource, err errors.Error)
 
 	// Check that the specified queue exists
 	Exists(ctx context.Context, subscription string) (exists bool, err errors.Error)

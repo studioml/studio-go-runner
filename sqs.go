@@ -142,7 +142,7 @@ func (sq *SQS) Exists(ctx context.Context, subscription string) (exists bool, er
 	return false, nil
 }
 
-func (sq *SQS) Work(ctx context.Context, qTimeout time.Duration, subscription string, handler MsgHandler) (msgCnt uint64, resource *Resource, err errors.Error) {
+func (sq *SQS) Work(ctx context.Context, qTimeout time.Duration, subscription string, maxJobs uint, handler MsgHandler) (msgCnt uint64, resource *Resource, err errors.Error) {
 
 	regionUrl := strings.SplitN(subscription, ":", 2)
 

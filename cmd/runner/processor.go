@@ -395,13 +395,13 @@ func (p *processor) deallocate(alloc *runner.Allocated) {
 //
 // This function blocks.
 //
-func (p *processor) Process(ctx context.Context) (wait time.Duration, ack bool, err errors.Error) {
+func (p *processor) Process(ctx context.Context) (ack bool, broadcast bool, err errors.Error) {
 
 	// Call the allocation function to get access to resources and get back
 	// the allocation we recieved
 	alloc, err := p.allocate()
 	if err != nil {
-		return errBackoff, false, errors.Wrap(err, "allocation fail backing off").With("stack", stack.Trace().TrimRuntime())
+		return false, false, errors.Wrap(err, "allocation fail backing off").With("stack", stack.Trace().TrimRuntime())
 	}
 
 	// Setup a function to release resources that have been allocated
@@ -418,11 +418,9 @@ func (p *processor) Process(ctx context.Context) (wait time.Duration, ack bool, 
 	// The allocation details are passed in to the runner to allow the
 	// resource reservations to become known to the running applications.
 	// This call will block until the task stops processing.
-	if err = p.deployAndRun(ctx, alloc); err != nil {
-		return time.Duration(0), true, err
-	}
+	ack, err = p.deployAndRun(ctx, alloc)
 
-	return time.Duration(0), true, nil
+	return ack, true, err
 }
 
 // getHash produces a very simple and short hash for use in generating directory names from
@@ -772,7 +770,7 @@ func (p *processor) run(ctx context.Context) (err errors.Error) {
 
 // run is called to execute the work unit
 //
-func (p *processor) deployAndRun(ctx context.Context, alloc *runner.Allocated) (err errors.Error) {
+func (p *processor) deployAndRun(ctx context.Context, alloc *runner.Allocated) (ack bool, err errors.Error) {
 
 	if !*debugOpt {
 		defer os.RemoveAll(p.ExprDir)
@@ -787,22 +785,24 @@ func (p *processor) deployAndRun(ctx context.Context, alloc *runner.Allocated) (
 		logger.Trace(fmt.Sprintf("experiment → %s → %s → %#v", p.Request.Experiment, p.ExprDir, *p.Request))
 	}
 
+	runner.InfoSlack(p.Request.Config.Runner.SlackDest, "started handling "+p.Request.Experiment.Key, []string{})
+
 	// fetchAll when called will have access to the environment variables used by the experiment in order that
 	// credentials can be used
 	if err = p.fetchAll(); err != nil {
-		return err
+		return true, err
 	}
 
 	// Blocking call to run the task
 	if err = p.run(ctx); err != nil {
-		// TODO: We could push work back onto the queue at this point if needed
-		// TODO: If the failure was related to the healthcheck then requeue and backoff the queue
-		return err
+		// If the failure was related to the healthcheck then requeue and backoff the queue, and do not
+		// ack the message so that it might go elsewhere and have a chance of success
+		return true, err
 	}
 
 	if err = p.returnAll(); err != nil {
-		return err
+		return true, err
 	}
 
-	return nil
+	return true, nil
 }
