@@ -111,6 +111,20 @@ func (ps *PubSub) Work(ctx context.Context, qTimeout time.Duration, subscription
 	errGo = sub.Receive(qCtx,
 		func(_ context.Context, msg *pubsub.Message) {
 
+			// If we detect that the top level context is cancelled then
+			// Nack anything that arrives to prevent messages sent to this subscriber
+			// and possibly others being repeated work.  Nacking wont do any harm in any
+			// event as the messages will simply be placed back into the queue
+			select {
+			case <-ctx.Done():
+				msg.Nack()
+				return
+			case <-qCtx.Done():
+				msg.Nack()
+				return
+			default:
+			}
+
 			if rsc, ack := handler(ctx, ps.project, subscription, ps.creds, msg.Data); ack {
 				msg.Ack()
 				resource = rsc

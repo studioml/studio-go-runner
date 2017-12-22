@@ -518,9 +518,12 @@ func (qr *Queuer) doWork(request *SubRequest, quitC chan bool) {
 		defer logger.Trace("completed doWork check " + key)
 
 		// Spins out a go routine to handle messages, Work is blocking and will return
-		// either after qr.timeout for a work message is received and processed.  Using a 0
-		// for maxJobs allows as many jobs to be started as can fill a machine
-		cnt, rsc, err := qr.tasker.Work(cCtx, qr.timeout, request.subscription, 0, handleMsg)
+		// either after qr.timeout for a work message is received and processed.  Using 16
+		// for maxJobs allows as many jobs to be started as can fill a machines without dragging
+		// massive numbers of requests into a single machine resulting in large amounts
+		// of repeated work.
+		//
+		cnt, rsc, err := qr.tasker.Work(cCtx, qr.timeout, request.subscription, 16, handleMsg)
 
 		// Cancel the context the message would have been handled using so that the queue
 		// checker below wont be activated
@@ -547,7 +550,6 @@ func (qr *Queuer) doWork(request *SubRequest, quitC chan bool) {
 				logger.Info(key + " resources not updated due to " + err.Error())
 			}
 		}
-
 	}()
 
 	// While waiting for this check periodically that the queue that
