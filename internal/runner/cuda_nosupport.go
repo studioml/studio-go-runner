@@ -6,7 +6,8 @@ package runner
 // a platform cannot support the CUDA hardware, and or APIs
 
 import (
-	"fmt"
+	"github.com/go-stack/stack"
+	"github.com/karlmutch/errors"
 )
 
 var (
@@ -23,10 +24,10 @@ var (
 	}
 )
 
-func getCUDAInfo() (outDevs cudaDevices, err error) {
+func getCUDAInfo() (outDevs cudaDevices, err errors.Error) {
 
 	if len(simDevs.Devices) == 0 {
-		return simDevs, fmt.Errorf("CUDA not supported on this platform")
+		return simDevs, errors.New("CUDA not supported on this platform").With("stack", stack.Trace().TrimRuntime())
 	} else {
 		return simDevs, nil
 	}

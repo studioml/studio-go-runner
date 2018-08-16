@@ -6,50 +6,65 @@ package runner
 // that are provisioned on a system
 
 import (
-	nvml "github.com/karlmutch/go-nvml" // MIT License
+	"github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml"
+
+	"github.com/go-stack/stack"
+	"github.com/karlmutch/errors"
 )
 
 var (
-	initErr = nvml.NVMLInit()
+	initErr errors.Error
 )
+
+func init() {
+	if errGo := nvml.Init(); errGo != nil {
+		initErr = errors.Wrap(errGo).With("stack", stack.Trace().TrimRuntime())
+	}
+}
 
 func HasCUDA() bool {
 	return true
 }
 
-func getCUDAInfo() (outDevs cudaDevices, err error) {
+func getCUDAInfo() (outDevs cudaDevices, err errors.Error) {
 
 	// Dont let the GetAllGPUs log a fatal error catch it first
 	if initErr != nil {
 		return outDevs, initErr
 	}
 
-	devs, err := nvml.GetAllGPUs()
-	outDevs = cudaDevices{Devices: make([]device, 0, len(devs))}
+	cnt, errGo := nvml.GetDeviceCount()
+	if errGo != nil {
+		return outDevs, errors.Wrap(errGo).With("stack", stack.Trace().TrimRuntime())
+	}
+
+	outDevs = cudaDevices{Devices: make([]device, 0, cnt)}
 	if err != nil {
 		return outDevs, err
 	}
 
-	for _, dev := range devs {
+	for i, _ := range outDevs.Devices {
 
-		name, _ := dev.Name()
-		uuid, _ := dev.UUID()
-		temp, _ := dev.Temp()
-		powr, _ := dev.PowerUsage()
-
-		mem, err := dev.MemoryInfo()
-		if err != nil {
-			return outDevs, err
+		dev, errGo := nvml.NewDevice(uint(i))
+		if errGo != nil {
+			return cudaDevices{}, errors.Wrap(errGo).With("device", i).With("stack", stack.Trace().TrimRuntime())
 		}
 
+		status, errGo := dev.Status()
+		if errGo != nil {
+			return cudaDevices{}, errors.Wrap(errGo).With("model", dev.Model).With("UUID", dev.UUID).With("device", i).With("stack", stack.Trace().TrimRuntime())
+		}
+
+		mem := status.Memory.Global
+
 		outDevs.Devices = append(outDevs.Devices, device{
-			Name:    name,
-			UUID:    uuid,
-			Temp:    temp,
-			Powr:    powr,
-			MemTot:  mem.Total,
-			MemUsed: mem.Used,
-			MemFree: mem.Free,
+			Name:    *dev.Model,
+			UUID:    dev.UUID,
+			Temp:    *status.Temperature, // °C
+			Powr:    *status.Power,
+			MemTot:  *mem.Used + *mem.Free,
+			MemUsed: *mem.Used,
+			MemFree: *mem.Free,
 		})
 	}
 	return outDevs, nil

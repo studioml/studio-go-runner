@@ -53,6 +53,14 @@
   version = "v0.4.7"
 
 [[projects]]
+  branch = "master"
+  digest = "1:36d1549972d1ebac59f3b15708485666761d8051f675776193ccb1be3cb6ea84"
+  name = "github.com/NVIDIA/gpu-monitoring-tools"
+  packages = ["bindings/go/nvml"]
+  pruneopts = "UT"
+  revision = "0d8f808b258db737c236989069bee3f91510b236"
+
+[[projects]]
   digest = "1:e92f5581902c345eb4ceffdcd4a854fb8f73cf436d47d837d1ec98ef1fe0a214"
   name = "github.com/StackExchange/wmi"
   packages = ["."]
@@ -414,14 +422,6 @@
   packages = ["."]
   pruneopts = "UT"
   revision = "2501cdd51ef4c60dd727c58b2199e1a09466b10f"
-
-[[projects]]
-  branch = "master"
-  digest = "1:198e424f758375f0ca76160a5299f7c3f6d288b8e94e36799af81441ce3228a5"
-  name = "github.com/karlmutch/go-nvml"
-  packages = ["."]
-  pruneopts = "UT"
-  revision = "c0e9d02ecca02d5a45e00cc234e65b6e6304682e"
 
 [[projects]]
   digest = "1:c08f5d8cc28ed4dccb098121d5f1f19f708bf04e3bbd4b772ce6461de6ef1ca2"
@@ -1035,6 +1035,7 @@
   input-imports = [
     "cloud.google.com/go/pubsub",
     "cloud.google.com/go/storage",
+    "github.com/NVIDIA/gpu-monitoring-tools/bindings/go/nvml",
     "github.com/aws/aws-sdk-go/aws",
     "github.com/aws/aws-sdk-go/aws/credentials",
     "github.com/aws/aws-sdk-go/aws/session",
@@ -1052,7 +1053,6 @@
     "github.com/karlmutch/errors",
     "github.com/karlmutch/go-cache",
     "github.com/karlmutch/go-fqdn",
-    "github.com/karlmutch/go-nvml",
     "github.com/karlmutch/go-shortid",
     "github.com/karlmutch/hashstructure",
     "github.com/karlmutch/logxi/v1",

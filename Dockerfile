@@ -20,7 +20,10 @@ RUN cd /tmp && \
     wget -q -O /tmp/cuda_8.deb ${CUDA_8_DEB} && \
     dpkg -i /tmp/cuda_8.deb && \
     apt-get -y update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends nvidia-cuda-dev cuda-nvml-dev-${CUDA_PACKAGE_VERSION} && \
+    DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends nvidia-cuda-dev nvidia-cuda-toolkit cuda-nvml-dev-${CUDA_PACKAGE_VERSION} && \
+    rm /tmp/cuda*.deb && \
+    wget -q -O /tmp/cuda_9.deb ${CUDA_9_DEB} && \
+    dpkg -i /tmp/cuda_9.deb && \
     rm /tmp/cuda*.deb && \
     apt-get clean
 
@@ -76,4 +79,4 @@ LABEL vendor="Sentient Technologies INC" \
       ai.sentient.module.version={{.duat.version}} \
       ai.sentient.module.name={{.duat.module}}
 
-CMD /bin/bash -c 'go get github.com/karlmutch/duat && go run build.go -r -dirs=internal && go run build.go -r -dirs=cmd'
+CMD /bin/bash -c 'go get github.com/karlmutch/duat && LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs/:$LD_LIBRARY_PATH CGO_ENABLED=1 go run build.go -r -dirs=internal && LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs/:$LD_LIBRARY_PATH CGO_ENABLED=1 go run build.go -r -dirs=cmd'
