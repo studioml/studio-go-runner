@@ -1,43 +1,18 @@
 # Copyright 2018-2020 (c) Cognizant Digital Business, Evolutionary AI. All rights reserved. Issued under the Apache 2.0 License.
 #
-FROM nvidia/cuda:10.0-cudnn7-runtime-ubuntu16.04
+FROM nvidia/cuda:10.1-cudnn7-runtime-ubuntu18.04
 
 RUN apt-get update && \
     apt-get install -y locales && \
     apt-get install -y language-pack-en && \
     update-locale "en_US.UTF-8" && \
-    apt-get install -y --no-install-recommends ca-certificates apt-transport-https gnupg-curl curl git lshw jq && \
-    apt-get install -y  --no-install-recommends git lshw
+    apt-get install -y --no-install-recommends wget ca-certificates apt-transport-https git lshw jq git lshw
 
 RUN apt-get install -y --no-install-recommends \
-        cuda-nvrtc-8-0=8.0.61-1 \
-        cuda-nvgraph-8-0=8.0.61-1 \
-        cuda-cusolver-8-0=8.0.61-1 \
-        cuda-cublas-8-0=8.0.61.2-1 \
-        cuda-cufft-8-0=8.0.61-1 \
-        cuda-curand-8-0=8.0.61-1 \
-        cuda-cusparse-8-0=8.0.61-1 \
-        cuda-npp-8-0=8.0.61-1 \
-        cuda-cudart-8-0=8.0.61-1
-
-RUN apt-get install -y --no-install-recommends \
-        cuda-cudart-9-0=9.0.176-1 \
-        cuda-command-line-tools-9-0 \
-        cuda-cufft-9-0 \
-        cuda-curand-9-0 \
-        cuda-cusolver-9-0 \
-        cuda-cusparse-9-0 \
-        cuda-libraries-9-0=9.0.176-1 \
-        cuda-cublas-9-0=9.0.176.3-1
-
-RUN apt-get install -y --no-install-recommends \
-        cuda-cudart-10-0=10.0.130-1 \
-        cuda-cufft-10-0 \
-        cuda-curand-10-0 \
-        cuda-cusolver-10-0 \
-        cuda-cusparse-10-0 \
-        cuda-libraries-10-0=10.0.130-1 \
-        cuda-cublas-10-0=10.0.130-1
+        cuda-cufft-10-1 \
+        cuda-curand-10-1 \
+        cuda-cusolver-10-1 \
+        cuda-cusparse-10-1
 
 RUN echo "/usr/local/nvidia/lib" >> /etc/ld.so.conf.d/nvidia.conf && \
     echo "/usr/local/nvidia/lib64" >> /etc/ld.so.conf.d/nvidia.conf
@@ -48,7 +23,7 @@ ENV LD_LIBRARY_PATH /usr/local/nvidia/lib:/usr/local/nvidia/lib64
 # nvidia-container-runtime
 ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
-ENV NVIDIA_REQUIRE_CUDA "cuda>=10.0"
+ENV NVIDIA_REQUIRE_CUDA "cuda>=10.1"
 
 RUN apt-get -y update && apt-get install -y --no-install-recommends \
         pkg-config \
@@ -59,12 +34,16 @@ RUN apt-get -y update && apt-get install -y --no-install-recommends \
 # Pick up some TF dependencies
 RUN apt-get install -y --no-install-recommends \
         build-essential \
-        libcudnn5=5.1.10-1+cuda8.0 \
-        libcudnn6=6.0.21-1+cuda8.0 \
         libhdf5-serial-dev \
-        libpng12-dev \
         libzmq3-dev && \
     apt-get clean
+
+RUN wget -q -O /tmp/libpng3.deb https://launchpad.net/~ubuntu-security/+archive/ubuntu/ppa/+build/15108504/+files/libpng3_1.2.54-1ubuntu1.1_amd64.deb && \
+    wget -q -O /tmp/libpng-dev.deb https://launchpad.net/~ubuntu-security/+archive/ubuntu/ppa/+build/15108504/+files/libpng12-dev_1.2.54-1ubuntu1.1_amd64.deb && \
+    wget -q -O /tmp/libpng.deb https://launchpad.net/~ubuntu-security/+archive/ubuntu/ppa/+build/15108504/+files/libpng12-0_1.2.54-1ubuntu1.1_amd64.deb && \
+    dpkg -i /tmp/libpng.deb && \
+    dpkg -i /tmp/libpng3.deb && \
+    dpkg -i /tmp/libpng-dev.deb
 
 ENV DEBIAN_FRONTEND noninteractive
 RUN apt-get install -y make build-essential libssl-dev zlib1g-dev \
@@ -87,13 +66,11 @@ RUN curl https://pyenv.run | /bin/bash && \
     pyenv install 3.5.9 && \
     pyenv global 3.6.10
 
-RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
+RUN apt-get install -y python3-distutils && \
+    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     python3 get-pip.py pip==19.0.3 setuptools==44.0.0 wheel==0.33.6
 
-RUN python3 -m pip install tensorflow-gpu==1.12.3 && \
-    python3 -m pip install tensorflow-gpu==1.13.2 && \
-    python3 -m pip install tensorflow-gpu==1.14.0 && \
-    python3 -m pip install tensorflow-gpu==1.15.2 && \
+RUN python3 -m pip install tensorflow-gpu==1.15.2 && \
     python3 -m pip install virtualenv==15.2.0 --force-reinstall && \
     python3 -m pip install opencv-python-headless && \
     apt-get clean
@@ -120,7 +97,7 @@ COPY add-ons/termite.terminfo /lib/terminfo/x/xterm-termite
 # Prometheus instrumented port
 EXPOSE 9090
 
-ENV NVIDIA_REQUIRE_CUDA=cuda>=10.0
+ENV NVIDIA_REQUIRE_CUDA=cuda>=10.1
 
 COPY run.sh /runner/run.sh
 COPY bin/runner-linux-amd64 /runner/runner-linux-amd64
