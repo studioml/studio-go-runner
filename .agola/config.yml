@@ -1,15 +1,13 @@
 version: v0
 
 runs:
-      - name: run
-        ## This task will run the built binary in the parent task and leverages the workspace capabilities
-        runtime:
-          type: pod
-          arch: amd64
-          containers:
-            - image: debian:stretch
-        steps:
-          - restore_workspace:
-              dest_dir: .
-          - run: 
-              command: ls -alcrt
+  - name: run
+    runtime:
+      type: pod
+      arch: amd64
+      containers:
+        - image: debian:stretch
+    steps:
+      - clone:
+      - run:
+        command: ls -alcrt
