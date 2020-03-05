@@ -11,4 +11,5 @@ runs:
         steps:
           - restore_workspace:
               dest_dir: .
-          - run: ls -alcrt
+          - run: 
+              command: ls -alcrt
