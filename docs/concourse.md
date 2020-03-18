@@ -93,7 +93,7 @@ inputs:
     - name: repo
 
 run:
-    path: " ./repo/test.sh'"
+    path: " ./repo/concourse-test.sh'"
 EOF
 docker tag leafai/studio-go-runner-concourse-build:$GIT_BRANCH localhost:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH
 docker push localhost:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH
