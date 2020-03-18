@@ -126,6 +126,27 @@ RUN \
     pip3 install tensorflow-gpu==1.15.2 && \
     apt-get clean
 
+ENV GO_VERSION 1.14
+
+RUN \
+    apt-get update && apt-get install -y apt-transport-https && \
+    curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add - && \
+    echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | tee -a /etc/apt/sources.list.d/kubernetes.list && \
+    apt-get update && \
+    apt-get install -y kubectl && \
+    mkdir -p /usr/local/bin && \
+    opsys=linux && \
+    curl -s https://api.github.com/repos/kubernetes-sigs/kustomize/releases | grep browser_download | grep $opsys | cut -d '"' -f 4 | grep /kustomize/v | sort | tail -n 1 | xargs curl -o /usr/local/bin/kustomize -L && \
+    chmod +x /usr/local/bin/kustomize
+
+RUN \
+    cd /var && \
+    wget -q -O /tmp/go.tgz https://storage.googleapis.com/golang/go${GO_VERSION}.linux-amd64.tar.gz && \
+    tar xzf /tmp/go.tgz && \
+    rm /tmp/go.tgz
+
+ENV GOROOT=/var/go
+
 # Will be overitten by other images deriving from this base image
 CMD ["/bin/bash"]
 

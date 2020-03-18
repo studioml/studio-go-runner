@@ -98,14 +98,24 @@ export RUNNER_BUILD_LOG=build-$GIT_BRANCH.log
 exit_code=0
 
 # Build the base image that other images will derive from for development style images
-docker build -t studio-go-runner-dev-base:working -f Dockerfile_base .
-export RepoImage=`docker inspect studio-go-runner-dev-base:working --format '{{ index .Config.Labels "registry.repo" }}:{{ index .Config.Labels "registry.version"}}'`
-export RepoBaseImage=`docker inspect studio-go-runner-dev-base:working --format '{{ index .Config.Labels "registry.base" }}:{{ index .Config.Labels "registry.version"}}'`
-docker tag studio-go-runner-dev-base:working $RepoImage
-docker rmi studio-go-runner-dev-base:working
+RepoVersion=`grep "registry.version=" Dockerfile_base | sed -e 's/registry.version=\(.*\)/\1/' | sed -e 's/^[ \t]*//' | cut -f1 -d\   `
+set +e
+docker image inspect leafai/studio-go-runner-dev-base:$RepoVersion 2>/dev/null 1>&2
+if [ $? != 0 ]; then
+    set -e
+    docker build -t studio-go-runner-dev-base:working -f Dockerfile_base .
+    export RepoImage=`docker inspect studio-go-runner-dev-base:working --format '{{ index .Config.Labels "registry.repo" }}:{{ index .Config.Labels "registry.version"}}'`
+    export RepoBaseImage=`docker inspect studio-go-runner-dev-base:working --format '{{ index .Config.Labels "registry.base" }}:{{ index .Config.Labels "registry.version"}}'`
+    docker tag studio-go-runner-dev-base:working $RepoImage
+    docker rmi studio-go-runner-dev-base:working
+fi
+set -e
 
 travis_fold start "build.image"
     travis_time_start
+        stencil -input Dockerfile_concourse | docker build -t leafai/studio-go-runner-concourse-build:$GIT_BRANCH -
+		docker tag leafai/studio-go-runner-concourse-build:$GIT_BRANCH localhost:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH
+
         # The workstation version uses the linux user ID of the builder to enable sharing of files between the
         # build container and the local file system of the user
         stencil -input Dockerfile_developer | docker build -t leafai/studio-go-runner-developer-build:$GIT_BRANCH -
@@ -181,8 +191,11 @@ travis_fold start "image.ci_start"
         RegistryIP=`kubectl --namespace container-registry get pod --selector=app=registry -o jsonpath="{.items[*].status.hostIP}"||true`
         if [ $exit_code -eq 0 ]; then
             if [[ ! -z "$RegistryIP" ]]; then
+                docker tag localhost:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH \
+                    $RegistryIP:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH || true
+                docker push $RegistryIP:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH || true
                 docker tag localhost:32000/leafai/studio-go-runner-standalone-build:$GIT_BRANCH \
-                    $RegistryIP:32000/leafai/studio-go-runner-standalone-build:$GIT_BRANCH|| true
+                    $RegistryIP:32000/leafai/studio-go-runner-standalone-build:$GIT_BRANCH || true
                 docker push $RegistryIP:32000/leafai/studio-go-runner-standalone-build:$GIT_BRANCH || true
                 if [ $exit_code -eq 0 ]; then
                     exit $exit_code

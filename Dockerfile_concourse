@@ -10,6 +10,10 @@ ENV PATH=$GOROOT/bin:$GOPATH/bin:$PATH:/project/.local/bin
 ENV LOGXI='*=INF'
 ENV LOGXI_FORMAT='happy,maxcol=1024'
 
+RUN mkdir -p /project/.local/bin && \
+    wget -q -O /project/.local/bin/minio https://dl.minio.io/server/minio/release/linux-amd64/minio && \
+    chmod +x /project/.local/bin/minio
+
 RUN \
     mkdir -p $GOPATH/bin && \
     (curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh) && \
@@ -26,10 +30,6 @@ RUN \
 WORKDIR /project/src/github.com/leaf-ai/studio-go-runner
 
 LABEL author="Karl Mutch"
-
-COPY . /project/src/github.com/leaf-ai/studio-go-runner/
-
-CMD /bin/bash -c './ci.sh'
 
 # Done last to prevent lots of disruption when bumping versions
 LABEL vendor="Open Source"
