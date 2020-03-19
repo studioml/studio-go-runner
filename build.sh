@@ -184,7 +184,7 @@ if [ $exit_code -ne 0 ]; then
 fi
 
 # In the event that the following command was successful then we know a microk8s registry is present
-# and we can defer any releases to the pipeline it is using rather than releasing from out
+# and we can defer any releases to the pipeline it is using rather than releasing from our
 # current pipeline process
 travis_fold start "image.ci_start"
     travis_time_start
@@ -193,10 +193,10 @@ travis_fold start "image.ci_start"
             if [[ ! -z "$RegistryIP" ]]; then
                 docker tag localhost:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH \
                     $RegistryIP:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH || true
-                docker push $RegistryIP:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH || true
+                docker push $RegistryIP:32000/leafai/studio-go-runner-concourse-build:$GIT_BRANCH 1>/dev/null || true
                 docker tag localhost:32000/leafai/studio-go-runner-standalone-build:$GIT_BRANCH \
                     $RegistryIP:32000/leafai/studio-go-runner-standalone-build:$GIT_BRANCH || true
-                docker push $RegistryIP:32000/leafai/studio-go-runner-standalone-build:$GIT_BRANCH || true
+                docker push $RegistryIP:32000/leafai/studio-go-runner-standalone-build:$GIT_BRANCH 1>/dev/null || true
                 if [ $exit_code -eq 0 ]; then
                     exit $exit_code
                 fi
@@ -218,10 +218,10 @@ travis_fold start "image.push"
 			if type docker 2>/dev/null ; then
                 dockerLines=`docker system info 2>/dev/null | egrep "Registry: .*index.docker.io.*|User" | wc -l`
 				if [ $dockerLines -eq 2 ]; then
-                    docker push leafai/studio-go-runner:$SEMVER
-                    docker push leafai/azure-studio-go-runner:$SEMVER
+                    docker push leafai/studio-go-runner:$SEMVER 1>/dev/null
+                    docker push leafai/azure-studio-go-runner:$SEMVER 1>/dev/null
                     # Push the development master image back to docker.io
-                    docker push $RepoImage
+                    docker push $RepoImage 1>/dev/null
                 fi
                 docker tag leafai/studio-go-runner:$SEMVER quay.io/leaf_ai_dockerhub/studio-go-runner:$SEMVER
                 docker tag leafai/azure-studio-go-runner:$SEMVER quay.io/leaf_ai_dockerhub/azure-studio-go-runner:$SEMVER
@@ -230,9 +230,9 @@ travis_fold start "image.push"
                 # There is simply no reliable way to know if a docker login has been done unless, for example
                 # config.json is not placed into your login directory, snap redirects etc so try and simply
                 # silently fail.
-                docker push quay.io/leaf_ai_dockerhub/studio-go-runner:$SEMVER || true
-                docker push quay.io/leaf_ai_dockerhub/azure-studio-go-runner:$SEMVER || true
-                docker push quay.io/leaf_ai_dockerhub/$RepoBaseImage || true
+                docker push quay.io/leaf_ai_dockerhub/studio-go-runner:$SEMVER 1>/dev/null || true
+                docker push quay.io/leaf_ai_dockerhub/azure-studio-go-runner:$SEMVER 1>/dev/null || true
+                docker push quay.io/leaf_ai_dockerhub/$RepoBaseImage 1>/dev/null || true
 			fi
 		fi
     travis_time_finish

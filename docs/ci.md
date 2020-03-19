@@ -4,17 +4,17 @@ This document describes setting up a CI pipline that can be used to prepare rele
 
 The steps described in this document can also be used by individual developers to perform build and release tasks on locally checked out code.
 
-studio go runner is intended to run in diverse hardware environments using GPU enabled machines. As a result providing a free, and publically hosted CI/CD platform is cost prohibitive. As an alternative the studio go runner CI and CD pipeline has been designed to center around the use of container images and is flexible about the hosting choices of specific steps in the pipeline.  Steps within the pipeline use image registries to demark the boundaries between pipeline steps.  Pipeline steps are typically implemented as jobs within a Kubernetes cluster, allowing the pipeline to be hosted using Kubernetes deployed on laptops through to fully productionized clusters.
+studio go runner is intended to run in diverse hardware environments using GPU enabled machines. As a result providing a free, and publically hosted CI/CD platform is cost prohibitive. As an alternative the studio go runner CI and CD pipeline has been designed to center around the use of container images and employs the Ubunut microk8s kubernetes distribution to support the pipeline.  Steps within the pipeline use image registries to demark the boundaries between pipeline steps.  Pipeline steps are typically implemented as jobs within a Kubernetes cluster, allowing the pipeline to be hosted using Kubernetes deployed on laptops through to fully productionized clusters.
 
 Triggering steps in the pipeline can be predicated on local/remote git commits, or any form of image publishing/releasing action against the image registr. Image registries may be hosted on self provisioned Kubernetes provisioned cluster either within the cloud, or on private infrastructure.  This allows testing to be done using the CI pipeline on both local laptops, workstations and in cloud or data center environments.  The choice of docker.io as the registry for the resulting build images is due to its support of selectively exposing only public repositories from github accounts preserving privacy.
 
-Pipelines can also be entirely self hosted upon the microk8s Kubernetes distribution, for example.  This style of pipeline is inteded to be used in circumstances where individuals have access to a single machine, have limited internet bandwidth, and so who do not wish to host images on external services or hosts or do not wish to incur costs for cloud resources and mightfor example have a local GPU that can be used for testing.
+Pipelines are entirely self hosted upon the microk8s Kubernetes distribution to reduce the confiuration needed.  This style of pipeline is amenable to be used in circumstances where access is limited to a single machine, limited internet bandwidth, making hosting intermediate images on external services slow or do not wish to incur costs for cloud resources.  This also suits conditions where a local GPU is present for example.
 
 These instructions first detail how a docker.io or local microk8s registry can be setup to trigger builds on github commits.  Instructions then detail how to make use of Keel, https://keel.sh/, to pull CI images into a cluster and run the pipeline.  Finally this document describes the use of Uber's Makisu to deliver production images to the docker.io / quay.io image hosting service(s).  docker hub is used as this is the most reliable of the image registries that Makisu supports, quay.io could not be made to work for this step.
 
 # Pipeline Overview
 
-The CI pipeline for the studio go runner project uses docker images as inputs to a series of processing steps making up the pipeline.  The following sections describe the pipeline components, and an additional section describing build failure diagnosis and tracking.  This pipeline is designed for use by engineers with Kubernetes familiarity without a complex CI/CD platform and the chrome that typically accompanies domain specific platforms and languages employed by dedicated build-engineer roles.
+The CI pipeline for the studio go runner project uses docker images as inputs to a series of processing steps making up the pipeline.  The following sections describe the pipeline components, and an additional section describing build failure diagnosis and tracking.  This pipeline is designed for use by engineers with Kubernetes familiarity.
 
 The pipeline is initiated through the creation of a builder docker image that contains a copy of the source code and tooling needed to perform the builds and testing.
 
@@ -23,13 +23,27 @@ The first stage in the pipeline is to execute the build and test steps using a b
 As described above the major portions of the pipeline can be illustrated by the following figure:
 
 ```console
-+---------------+       +---------------------+      +---------------+        +-------------------+      +----------------------+      +-----------------+
-|               |       |                     |      |               |        |                   |      |                      |      |                 |
-|   Reference   |       |      git-watch      |      |     Makisu    |        |                   +----> |    Keel Triggers     |      | Container Based |
-|    Builder    +-----> |    Bootstrapping    +----> |               +------> |  Image Registry   |      |                      +----> |  CI Build Test  |
-|     Image     |       |      Copy Pod       |      | Image Builder |        |                   | <----+ Build, Test, Release |      |                 |
-|               |       |                     |      |               |        |                   |      |                      |      |                 |
-+---------------+       +---------------------+      +---------------+        +-------------------+      +----------------------+      +-----------------+
++---------------+       
+|               |       
+|   Reference   |       
+|    Builder    +----------------+
+|     Image     |                |
+|               |                |
++---------------+                |
+                         +-------+--------+      +----------------------+      +-----------------+     +-----------+
+                         |                |      |                      |      |                 |     |           |
+                         |    microk8s    +----> |    Keel Triggers     |      | Container Based |     |  makisu   |
+                         |     Image      |      |                      +----> |  CI Build Test  +---->|   image   |
+                         |    Registry    | <----+ Build, Test, Release |      |                 |     |  builder  |
+                         |                |      |                      |      |                 |     |           |
+                         +-------+--------+      +----------------------+      +-----------------+     +-----------+
++---------------------+          |
+|                     |          | 
+|      git-watch      |          | 
+|    Bootstrapping    +----------+
+|      Copy Pod       |      
+|                     |      
++---------------------+      
 ```
 
 Inputs and Outputs to pipeline steps consist of Images that when pushed to a registry will trigger downstream build steps.
@@ -60,6 +74,25 @@ Other software systems used include
 3. Go from Google
 
 Montoring the progress of tasks within the pipeline can be done by inspecting pod states, and extracting logs of pods responsible for various processing steps.  The monitoring and diagnosis section at the end of this document contains further information.
+
+# Builder Installation Overview
+
+Installation of the build system consists of several steps:
+
+Prerequistes - docker, microk8s, tools, docker login, microk8s local registry support
+Build base images - docker pull or manually build the version controlled components of the build
+Configure image registra
+Configure microk8s unsecured registry access
+Install image cache
+Helm install keel.sh
+Perform first local build
+Define docker.io secrets and github release token
+Deploy keel configuration
+Do a local stock build
+
+Once these steps are completed the builds can be triggered using git-watch at will, or when local commits occur.
+
+git-watch deployment for build triggers
 
 # Prerequisties
 
@@ -101,7 +134,7 @@ export KUBECONFIG=~/.kube/microk8s.config
 microk8s.stop
 microk8s.start
 microk8s.config > $KUBECONFIG
-microk8s.enable registry storage dns gpu
+microk8s.enable dns storage registry gpu
 ```
 There are some optional steps that you should complete prior to using the build system depending upon your goal such as releasing the build for example.
 
@@ -129,6 +162,63 @@ https://docs.docker.com/engine/reference/commandline/login/#credentials-store
 Login Succeeded
 ```
 
+# microk8s local registry support
+
+The microk8s image registry is describe in detail at, https://microk8s.io/docs/registry-built-in.
+
+Images moving within the pipeline will generally be handled by the Kubernetes registry, however in order for the pipeline to access this registry there are two ways of doing so, the first using the Kubernetes APIs and the second to treat the registry as a server openly available outside of the cluster.  These requirements can be met by using the internal Kubernetes registry using the microk8s IP addresses and also the address of the host all referencing the same registry.
+
+The first then is to locate the IP address for the host that can be used and then define an environment variable to reference the registry.  
+
+```console
+$ export RegistryIP=`kubectl --namespace container-registry get pod --selector=app=registry -o jsonpath="{.items[*].status.hostIP}"`
+$ export RegistryPort=32000
+$ echo $RegistryIP
+172.31.39.52
+```
+
+Now we have an IP Address for our unsecured microk8s registry we need to add it to the containerd configuration file being used by microk8s to mark this specific endpoint as being permitted for use with HTTP rather than HTTPS, as follows:
+
+```console
+sudo vim /var/snap/microk8s/current/args/containerd-template.toml
+```
+
+And add the last two lines in the following example to the file substituting in the IP Address, $RegistryIP.
+
+```console
+    [plugins.cri.registry]
+      [plugins.cri.registry.mirrors]
+        [plugins.cri.registry.mirrors."docker.io"]
+          endpoint = ["https://registry-1.docker.io"]
+        [plugins.cri.registry.mirrors."local.insecure-registry.io"]
+          endpoint = ["http://localhost:32000"]
+        [plugins.cri.registry.mirrors."172.31.39.52:32000"]
+          endpoint = ["http://172.31.39.52:32000"]
+```
+
+```console
+sudo vim /var/snap/docker/current/config/daemon.json
+```
+
+And add the insecure-registries line in the following example to the file substituting in the IP Address we obtained from the $RegistryIP
+
+```console
+{
+    "log-level":        "error",
+    "storage-driver":   "overlay2",
+    "insecure-registries" : ["172.31.39.52:32000"]
+}
+```
+
+The services then need restarting:
+
+```console
+$ microk8s.stop
+$ sudo snap disable docker
+$ sudo snap enable docker
+$ microk8s.start
+```
+
 # A word about privacy
 
 Many of the services that provide image hosting use Single Sign On and credentials management with your source code control platform of choice.  As a consequence of this often these services will gain access to any and all repositories private or otherwise that you might have access to within your account.  In order to preserve privacy and maintain fine grained control over the visibility of your private repositories it is recommended that when using docker hub and other services that you create a service account that has the minimal level of access to repositories as necessary to implement your CI/CD features.
@@ -152,7 +242,7 @@ In order to prepare for producing product specific build images a base image is 
 If you wish to simply use an existing build configuration then you can pull the prebuilt image into your local docker registry, or from docker hub using the following command:
 
 ```
-docker pull leafai/studio-go-runner-dev-base:0.0.3
+docker pull leafai/studio-go-runner-dev-base:0.0.4
 ```
 
 For situations where an on-premise or single developer machine the base image can be built with the `Dockerfile_base` file using the following command:
@@ -196,7 +286,9 @@ aa54c2bc1229: Waiting
 
 The next section instructions, give a summary of what needs to be done in order to use the docker hub service, or local docker registry to provision an image repository that auto-builds builder images from the studio go runner project and pushes these to the docker hub image registra.  The second section covers use cases for secured environment, along with developer workstations and laptops.
 
-## Internet based registra build images
+## Internet based registra build images (optional)
+
+This section contains instructions for creating a public release docker registry project.
 
 The first step is to create or login to an account on hub.docker.com.  When creating an account it is best to ensure before starting that you have a browser window open to github.com using the account that you wish to use for accessing code on github to prevent any unintended accesses to private repositories.  As you create the account on you can choose to link it automatically to github granting application access from docker to your github authorized applications.  This is needed in order that docker can poll your projects for any pushed git commit changes in order to trigger image building.
 
@@ -220,75 +312,31 @@ You can now trigger the first build and test cycle for the repository.  Once the
 
  This use case uses git commits to trigger builds of CI/CD workflow images occuring within a locally deployed Kubernetes cluster.  In order to support local Kubernetes clusters the microk8s tool is used, https://microk8s.io/.
 
-Uses cases for local clusters include secured environments, snap based installation of the microk8s tool can be done by downloading the snap file.  Another option is to download a git export of the microk8s tool and build it within your secured environment.  If you are using a secured environment adequate preparations should also be made for obtaining copies of any images that you will need for running your applications and also reference images needed by the microk8s install such as the images for the DNS server, the container registry, the Makisu image from docker hub and other images that will be used.  In order to be able to do this you can pre-pull images for build and push then to a private registry. If you need access to multiple registries, you can create one secret for each registry. Kubelet will merge any imagePullSecrets into a single virtual .docker/config.json. For more information please see, https://kubernetes.io/docs/concepts/containers/images/#using-a-private-registry.
+ When using microk8s a local image registry is deployed by the microk8s kubernetes distribution.  The microk8s registry is unsecured being a workstation level tool.
 
-While you can run within a walled garden secured network environment the microk8s cluster does use an unsecured registry which means that the machine and any accounts on which builds are running should be secured independently.  If you wish to secure images that are produced by your pipeline then you should modify your ci\_containerize\_microk8s.yaml, or a copy of the same, file to point at a private secured registry, such as a self hosted https://trow.io/ instance.
+
+<table>
+    <tr>
+        <td>
+[Optional] If you are using a secured registry environment adequate preparations should also be made for obtaining copies of any images that you will need for running your applications and also reference images needed by the microk8s install such as the images for the DNS server, the container registry, the Makisu image from docker hub and other images that will be used.  In order to be able to do this you can pre-pull images for build and push then to a private registry. If you need access to multiple registries, you can create one secret for each registry. Kubelet will merge any imagePullSecrets into a single virtual .docker/config.json. For more information please see, https://kubernetes.io/docs/concepts/containers/images/#using-a-private-registry.
+
+While you can run within a walled garden secured network environment the microk8s cluster does use an unsecured registry which means that the machine and any accounts on which builds are running should be secured independently.  If you wish to secure images that are produced by your pipeline then you should modify your ci\_containerize\_microk8s.yaml, or a copy of the same, file to point at a private secured registry.
+        </td>
+    </tr>
+</table>
 
 The CI bootstrap step is the name given to the initial CI pipeline image creation step.  The purpose of this step is to generate a docker image containing all of the source code needed for a build and test.
 
 When using container based pipelines the image registry being used becomes a critical part of the pipeline for storing the images that are pulled into processing steps and also for acting as a repository of images produced during pipeline execution.  When using microk8s two registries will exist within the local system one provisioned by docker in the host system, and a second hosted by microk8s that acts as your kubernetes registry.
 
-Images moving within the pipeline will generally be handled by the Kubernetes registry, however in order for the pipeline to access this registry there are two ways of doing so, the first using the Kubernetes APIs and the second to treat the registry as a server openly available outside of the cluster.  These requirements can be met by using the internal Kubernetes registry using the microk8s IP addresses and also the address of the host all referencing the same registry.
-
-The first then is to locate the IP address for the host that can be used and then define an environment variable to reference the registry.  
-
-```console
-$ export RegistryIP=`kubectl --namespace container-registry get pod --selector=app=registry -o jsonpath="{.items[*].status.hostIP}"`
-$ export RegistryPort=32000
-$ echo $RegistryIP
-172.31.39.52
-```
-
-Now we have an IP Address for our unsecured microk8s registry we need to add it to the containerd configuration file being used by microk8s to mark this specific endpoint as being permitted for use with HTTP rather than HTTPS, as follows:
-
-```console
-sudo vim /var/snap/microk8s/current/args/containerd-template.toml
-```
-
-And add the last two lines in the following example to the file substituting in the IP Address we selected
-
-```console
-    [plugins.cri.registry]
-      [plugins.cri.registry.mirrors]
-        [plugins.cri.registry.mirrors."docker.io"]
-          endpoint = ["https://registry-1.docker.io"]
-        [plugins.cri.registry.mirrors."local.insecure-registry.io"]
-          endpoint = ["http://localhost:32000"]
-        [plugins.cri.registry.mirrors."172.31.39.52:32000"]
-          endpoint = ["http://172.31.39.52:32000"]
-```
-
-```console
-sudo vim /var/snap/docker/current/config/daemon.json
-```
-
-And add the insecure-registries line in the following example to the file substituting in the IP Address we obtained from the $RegistryIP
-
-```console
-{
-    "log-level":        "error",
-    "storage-driver":   "overlay2",
-    "insecure-registries" : ["172.31.39.52:32000"]
-}
-```
-
-The services then need restarting:
-
-```console
-$ microk8s.stop
-$ sudo snap disable docker
-$ sudo snap enable docker
-$ microk8s.start
-```
-
 The first step is the loading of the base image containing the needed build tooling.  The base image can be loaded into your local docker environment and then subsequently pushed to the cluster registry.  If you have followed the instructions in the 'CUDA and Compilation base image preparation' section then this image when pulled will come from the locally stored image, alternatively the image should be pulled from the docker.io repository.
 
 ```console
-$ docker pull leafai/studio-go-runner-dev-base:0.0.3
-$ docker tag leafai/studio-go-runner-dev-base:0.0.3 localhost:32000/leafai/studio-go-runner-dev-base:0.0.3
-$ docker tag leafai/studio-go-runner-dev-base:0.0.3 $RegistryIP:32000/leafai/studio-go-runner-dev-base:0.0.3
-$ docker push localhost:32000/leafai/studio-go-runner-dev-base:0.0.3
-$ docker push $RegistryIP:32000/leafai/studio-go-runner-dev-base:0.0.3
+$ docker pull leafai/studio-go-runner-dev-base:0.0.4
+$ docker tag leafai/studio-go-runner-dev-base:0.0.4 localhost:32000/leafai/studio-go-runner-dev-base:0.0.4
+$ docker tag leafai/studio-go-runner-dev-base:0.0.4 $RegistryIP:32000/leafai/studio-go-runner-dev-base:0.0.4
+$ docker push localhost:32000/leafai/studio-go-runner-dev-base:0.0.4
+$ docker push $RegistryIP:32000/leafai/studio-go-runner-dev-base:0.0.4
 ```
 
 Once the base image is loaded and has been pushed into the kubernetes container registry, git-watch is used to initiate image builds inside the cluster that, use the base image, git clone source code from fresh commits, and build scripts etc to create an entirely encapsulated CI image.
@@ -317,13 +365,18 @@ The build deployment contains an annotated kubernetes deployment of the build im
 
 Keel is documented at https://keel.sh/, installation instruction can also be found at, https://keel.sh/guide/installation.html.  Once deployed keel can be left to run as a background service observing Kubernetes deployments that contain annotations it is designed to react to.  Keel will watch for changes to image repositories and will automatically upgrade the Deployment pods as new images are seen causing the CI/CD build logic encapsulated inside the images to be triggered as they they are launched as part of a pod.
 
-The commands that you might perform in order to deploy keel into an existing Kubernetes deploy might well appear as follows:
+The commands that you might perform in order to deploy keel into an existing Kubernetes deploy appears as follows:
 
 ```
-mkdir -p ~/project/src/github.com/keel-hq
-cd ~/project/src/github.com/keel-hq
-git clone https://github.com/keel-hq/keel.git
-kubectl create -f ~/project/src/github.com/keel-hq/keel/deployment/deployment-rbac.yaml
+helm init
+helm repo add keel https://charts.keel.sh
+helm repo update
+helm upgrade --install keel --namespace=kube-system keel/keel
+```
+
+Once the pre-requites have been install then the source code can be retrieved as follows:
+
+```
 mkdir -p ~/project/src/github.com/leaf-ai
 cd ~/project/src/github.com/leaf-ai
 git clone https://github.com/leaf-ai/studio-go-runner.git
@@ -377,14 +430,18 @@ The next step is to store the registry yaml settings into an environment variabl
 ```console
 export Registry=`cat registry.yaml`
 export GITHUB_TOKEN=a6e5f445f68e34bfcccc49d01c282ca69a96410e
-export K8S_NAMESPACE=ci-go-runner-$USER-`petname`
+export K8S_NAMESPACE=ci-go-runner-$USER
 ```
 
-The final step is to decide which of the ci\_keel yaml files should be used.  If you are doing a build that relies on build images hosted on public docker registries then the ci\_keel.yaml file is a good fit.  It does allow you to also specify a custom value for the Image name that should be watched.  For example you can use commands lines such as the following to change where the host image can be found at.
+## Locally deployed keel testing and CI
 
-In the case that microk8s is being used to host images moving through the pipeline then the $Registry setting should contain the IP address that the microk8s registry will be using that is accessible across the system, that is the $RegistryIP and the port number $RegistryPort.  The $Image value can be used to specify the name of the container image that is being used, its host name will differ because the image get pushed from a localhost development machine and therefor is denoted by the localhost host name rather than the IP address for the registry.
+This section documents how builds can be hosted inside the microk8s deployed cluster.  Builds run within microk8s using keel are triggered by the presence of a standalone build image.
 
-The following example configures build images to come from a localhost registry.
+The $RegistryIP and $Registry port values denote the local docker registra, the Registry setting denotes the docker registra to which releases are pushed.  The $RegistryIP setting populated in a previous step will contain the IP address that the microk8s registry will be using that is accessible from both the physical host and the kubelets.
+
+The CLI value option Image item can be used to specify the name of the docker image that is being used for builds in keel.  The host name component of the docker image name will use the $RegistryIP.
+
+The following example configures build images to come from outr microk8s docker registry, based on the Image parameter using the $RegistryIP and $RegistryPort environment variables.  The $Registry
 
 ```console
 $ export GIT_BRANCH=`echo '{{.duat.gitBranch}}'|stencil -supress-warnings - | tr '_' '-' | tr '\/' '-'`
@@ -393,10 +450,7 @@ export K8S_POD_NAME=`microk8s.kubectl --namespace=$K8S_NAMESPACE get pods -o jso
 microk8s.kubectl --namespace $K8S_NAMESPACE logs -f $K8S_POD_NAME
 ```
 
-
-## Locally deployed keel testing and CI
-
-These instructions will be useful to those using a locally deployed Kubernetes distribution such as microk8s.  If you wish to use microk8s you should first deploy using the workstations instructions found in this souyrce code repository at docs/workstation.md.  You can then return to this section for further information on deploying the keel based CI/CD within your microk8s environment.
+These instructions will be useful to those using a locally deployed Kubernetes distribution such as microk8s.  If you wish to use microk8s you should first deploy using the workstations instructions found in this source code repository at docs/workstation.md.  You can then return to this section for further information on deploying the keel based CI/CD within your microk8s environment.
 
 In the case that a test of a locally pushed docker image is needed you can build your image locally and then when the build.sh is run it will do a docker push to a microk8s cluster instance running on your workstation or laptop.  In order for the keel deployment to select the locally hosted image registry you set the Image variable for stencil to substitute into the ci\_keel.yaml file.
 
@@ -407,7 +461,7 @@ $ ./build.sh
 $ export GITHUB_TOKEN=a6e5f445f68e34bfcccc49d01c282ca69a96410e
 $ export Registry=`cat registry.yaml`
 $ export GIT_BRANCH=`echo '{{.duat.gitBranch}}'|stencil -supress-warnings - | tr '_' '-' | tr '\/' '-'`
-$ export K8S_NAMESPACE=ci-go-runner-$USER-`petname`
+$ export K8S_NAMESPACE=ci-go-runner-$USER
 $ stencil -input ci_keel.yaml -values Registry=${Registry},Image=localhost:32000/leafai/studio-go-runner-standalone-build:${GIT_BRANCH},Namespace=${K8S_NAMESPACE}| microk8s.kubectl apply -f -
 ```
 
@@ -416,7 +470,7 @@ If you are using the Image bootstrapping features of git-watch the commands woul
 ```console
 $ export GITHUB_TOKEN=a6e5f445f68e34bfcccc49d01c282ca69a96410e
 $ export Registry=`cat registry.yaml`
-$ export K8S_NAMESPACE=ci-go-runner-$USER-`petname`
+$ export K8S_NAMESPACE=ci-go-runner-$USER
 $ stencil -input ci_keel_microk8s.yaml -values Registry=$Registry,Image=$RegistryIP:$RegistryPort/leafai/studio-go-runner-standalone-build:latest,Namespace=${K8S_NAMESPACE} | kubectl apply -f -
 ```
 
@@ -459,7 +513,7 @@ In cases where a locally checkout copy of the source repository is used and comm
 $ export RegistryIP=`kubectl --namespace container-registry get pod --selector=app=registry -o jsonpath="{.items[*].status.hostIP}"`
 $ export RegistryPort=32000
 $ export Registry=`cat registry-stencil.yaml | stencil`
-$ docker push localhost:32000/leafai/studio-go-runner-dev-base:0.0.3
+$ docker push localhost:32000/leafai/studio-go-runner-dev-base:0.0.4
 $ git-watch -v --ignore-aws-errors --job-template ci_containerize_local.yaml `pwd`^`git rev-parse --abbrev-ref HEAD`
 ```
 

@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/bin/bash -x
 
 [ -z "$GOPATH" ] && echo "Error: env variable GOPATH must be set" && exit 1;
 [ -z "$GITHUB_TOKEN" ] && echo "Warning : env variable GITHUB_TOKEN should be set in the event that a release is to be generated" ;
@@ -67,6 +67,13 @@ PING_LOOP_PID=$!
 function cleanup {
     # nicely terminate the ping output loop
     kill $PING_LOOP_PID > /dev/null 2>&1 || true
+
+    echo "Waiting for a restart"
+
+    for (( ; ; ))
+    do
+        sleep 600
+    done
 }
 
 trap cleanup EXIT
@@ -80,6 +87,8 @@ function ExitWithError
 
 function Tidyup
 {
+    echo "Tidyup"
+
     ExitWithError "Abort"
 }
 
@@ -132,7 +141,9 @@ if [ $exit_code -eq 0 ]; then
 # Run the docker image build using Mikasu within the same namespace we are occupying and
 # the context for the image build will be the /build mount
     stencil -values Namespace=$K8S_NAMESPACE -input ci_release_image_microk8s.yaml | kubectl --namespace $K8S_NAMESPACE create -f -
-    until kubectl --namespace $K8S_NAMESPACE  get job/imagebuilder -o jsonpath='{.status.conditions[].status}' | grep True ; do sleep 3 ; done
+    set +x
+    until kubectl --namespace $K8S_NAMESPACE  get job/imagebuilder -o jsonpath='{.status.conditions[].status}' | grep True ; do sleep 10 ; done
+    set -x
     echo "imagebuild-mounted complete" $K8S_POD_NAME
     kubectl --namespace $K8S_NAMESPACE logs job/imagebuilder
     kubectl --namespace $K8S_NAMESPACE describe job/imagebuilder
@@ -142,13 +153,8 @@ fi
 echo "Return pod back to the ready state for keel to begin monitoring for new images" $K8S_POD_NAME
 kubectl label deployment build keel.sh/policy=force --namespace=$K8S_NAMESPACE
 
-for (( ; ; ))
-do
-    sleep 600
-done
-
 if [ $exit_code -ne 0 ]; then
     exit $exit_code
 fi
 
-exit 0
+exit -1
