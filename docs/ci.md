@@ -487,6 +487,10 @@ One of the options that exists for build and release is to make use of a locally
 $ ./build.sh
 ```
 
+```
+kubectl logs --namespace ci-go-runner-kmutch --selector=app=build -f
+```
+
 ## Triggering and Automation
 
 Triggering build can be done via a locally checked out git repository for via a reference to a remote repository.  In both cases git-watch can be used to monitor for changes.
