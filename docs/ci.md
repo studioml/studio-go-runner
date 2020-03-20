@@ -441,7 +441,7 @@ The $RegistryIP and $Registry port values denote the local docker registra, the 
 
 The CLI value option Image item can be used to specify the name of the docker image that is being used for builds in keel.  The host name component of the docker image name will use the $RegistryIP.
 
-The following example configures build images to come from outr microk8s docker registry, based on the Image parameter using the $RegistryIP and $RegistryPort environment variables.  The $Registry
+The following example configures build images to come from the local microk8s docker registry, based on the Image parameter using the $RegistryIP and $RegistryPort environment variables.  The $Registry
 
 ```console
 $ export GIT_BRANCH=`echo '{{.duat.gitBranch}}'|stencil -supress-warnings - | tr '_' '-' | tr '\/' '-'`
