@@ -214,8 +214,8 @@ The services then need restarting:
 
 ```console
 $ microk8s.stop
-$ sudo snap disable docker
-$ sudo snap enable docker
+$ sudo snap stop docker
+$ sudo snap start docker
 $ microk8s.start
 ```
 
